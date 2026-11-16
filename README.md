@@ -1,9 +1,8 @@
 # Rune Below
 
-A LÖVE 11.5 dungeon shooter with 7-11 connected rooms per floor. Clear the
-Hex Chapel and the Reliquary to unlock the Crown Crypt. When the Hollow King
+A LÖVE 11.5 dungeon shooter with procedurally generated floors. Collect the runes to unlock the Crown Crypt. When the Hollow King
 falls, walk over the golden ladder to descend to a fresh floor. Your vitality
-carries over, and each floor has two new runes to recover.
+carries over, and each floor has one to three new runes to recover.
 
 The minimap marks your room in cyan, uncollected runes in violet, and the
 boss room in red. The cleared boss room turns gold when the ladder opens.
@@ -14,6 +13,7 @@ Sparks from a distance or dash through them to avoid damage.
 
 ## R36S
 
+From the repository root, run `python3 package_r36s.py` to build `RuneBelow-R36S.zip`.
 On firmware with current PortMaster installed, copy Rune Below.sh and the
 rune-below folder from this ZIP into the SD card's ports folder. Keep the
 script beside the folder. Refresh your game list or reboot, then launch
@@ -22,10 +22,10 @@ Rune Below from Ports. If launch fails, check rune-below/log.txt.
 | R36S | Action |
 | --- | --- |
 | Left stick | Move |
-| Right stick | Aim continuously. Centering the stick keeps the last aim. |
-| R1 | Hold to fire |
+| Right stick | Aim continuously. Push to the rim in any direction to fire. |
+| R1 | Cast a radial spell that clears nearby hostile shots |
 | L1 | Dash in the movement direction or toward your aim while standing |
-| A | Cast a radial spell that clears nearby hostile shots |
+| A | Confirm the highlighted upgrade |
 | Start | Begin, pause, resume, or restart after a run |
 | Select | Quit from title or pause |
 
@@ -34,7 +34,7 @@ The launcher uses PortMaster's SDL controller mapping and LÖVE 11.5 runtime.
 ## Desktop
 
 Open rune-below/RuneBelow.love with LÖVE 11.5, or run the RuneBelow
-source folder with `love RuneBelow` from its parent directory.
+source with `love .` from the repository root.
 Use WASD, mouse aim, left click to fire, Shift to dash, right click or E
 to cast, Enter to begin, P to pause, and Esc to quit.
 

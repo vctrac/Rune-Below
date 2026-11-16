@@ -1,6 +1,7 @@
 local floors = require("floors")
 local controls = require("controls")
 local art = require("art")
+local orbit = require("orbit")
 
 local W, H, HUD = 640, 396, 48
 local WALL, GAP = 24, 44
@@ -51,7 +52,7 @@ local function reset()
     state = {
         mode = "title", floor = floors.new(1, love.math.random), room = 1,
         level = 1, xp = 0, nextXP = 6, upgrades = {},
-        upgradeTimers = {orbit = 0, aura = 0, pulse = 2}, allies = {},
+        upgradeTimers = {aura = 0, pulse = 2}, allies = {},
         player = spawnPlayer({ax = 1, ay = 0, hp = 6}),
         bullets = {}, sparks = {}, enemies = {}, rings = {}, ghosts = {},
         shake = 0, shakeX = 0, shakeY = 0, flash = 0, muzzle = 0, trail = 0,
@@ -252,32 +253,66 @@ local function explode(e)
     art.play("explode")
 end
 
+local function defeatEnemy(index)
+    local e = state.enemies[index]
+    if e.kind == "spark" then
+        explode(e)
+    else
+        burst(e.x, e.y, enemyTypes[e.kind].color, 19)
+        impact(e.x, e.y, enemyTypes[e.kind].color, 33, 0.23, 2)
+    end
+    table.remove(state.enemies, index)
+    if state.upgrades.grave_calling and e.kind ~= "king"
+        and love.math.random(100) <= 15 then
+        state.allies[#state.allies + 1] = {
+            kind = e.kind, x = e.x, y = e.y, hp = math.max(2, enemyTypes[e.kind].hp),
+            life = 12, attack = 0, pulse = #state.allies + 2,
+        }
+        burst(e.x, e.y, "violet", 14)
+    end
+    state.kills = state.kills + 1
+    grantXP(e.kind == "king" and 5 or 1)
+    if (state.upgrades.health_drop or 0) > 0 and love.math.random(100) <= math.min(50, 8 * state.upgrades.health_drop) then
+        state.floor.pickups[state.room] = state.floor.pickups[state.room] or {}
+        state.floor.pickups[state.room][#state.floor.pickups[state.room] + 1] = {
+            kind = "health", x = e.x, y = e.y,
+        }
+    end
+    if e.kind == "king" then
+        impact(e.x, e.y, "gold", 148, 0.62, 9)
+        burst(e.x, e.y, "gold", 32)
+        burst(e.x, e.y, "violet", 24)
+        for _, escort in ipairs(state.enemies) do
+            burst(escort.x, escort.y, "violet", 9)
+        end
+        state.enemies = {}
+    end
+end
+
+local function damageEnemy(index, damage)
+    local enemy = state.enemies[index]
+    enemy.hp = enemy.hp - damage
+    enemy.hit = 0.09
+    if enemy.hp <= 0 then defeatEnemy(index) end
+end
+
 local function updateAllies(dt)
     for i = #state.allies, 1, -1 do
         local ally = state.allies[i]
         ally.life, ally.attack = ally.life - dt, ally.attack - dt
-        local target, closest
-        for _, enemy in ipairs(state.enemies) do
+        local target, closest, targetIndex
+        for index, enemy in ipairs(state.enemies) do
             local _, _, distance = unit(enemy.x - ally.x, enemy.y - ally.y)
-            if not closest or distance < closest then target, closest = enemy, distance end
+            if not closest or distance < closest then target, closest, targetIndex = enemy, distance, index end
         end
         if target then
             local ax, ay = unit(target.x - ally.x, target.y - ally.y)
             if closest > enemyTypes[target.kind].radius + 9 then
                 move(ally, ax * 92 * dt, ay * 92 * dt, 8, false)
             elseif ally.attack <= 0 then
-                target.hp = target.hp - 2
-                target.hit = 0.1
                 ally.attack = 0.7
                 burst(target.x, target.y, "violet", 5)
-                if target.hp <= 0 then
-                    burst(target.x, target.y, enemyTypes[target.kind].color, 14)
-                    for j = #state.enemies, 1, -1 do
-                        if state.enemies[j] == target then table.remove(state.enemies, j) break end
-                    end
-                    state.kills = state.kills + 1
-                    grantXP(1)
-                end
+                damageEnemy(targetIndex, 2)
             end
         end
         if ally.life <= 0 or ally.hp <= 0 then
@@ -359,46 +394,10 @@ local function updateBullets(dt)
             for j = #state.enemies, 1, -1 do
                 local e = state.enemies[j]
                 if near(b.x, b.y, e.x, e.y, enemyTypes[e.kind].radius + 3) then
-                    e.hp = e.hp - (b.kind == "spell" and 3 or (p.bulletDamage or 1))
-                    e.hit = 0.09
                     burst(b.x, b.y, b.kind == "spell" and "violet" or "gold", 7)
                     state.shake = math.min(9, state.shake + 0.6)
                     art.play("hit")
-                    if e.hp <= 0 then
-                        if e.kind == "spark" then
-                            explode(e)
-                        else
-                            burst(e.x, e.y, enemyTypes[e.kind].color, 19)
-                            impact(e.x, e.y, enemyTypes[e.kind].color, 33, 0.23, 2)
-                        end
-                        table.remove(state.enemies, j)
-                        if state.upgrades.grave_calling and e.kind ~= "king"
-                            and love.math.random(100) <= 15 then
-                            state.allies[#state.allies + 1] = {
-                                kind = e.kind, x = e.x, y = e.y, hp = math.max(2, enemyTypes[e.kind].hp),
-                                life = 12, attack = 0, pulse = #state.allies + 2,
-                            }
-                            burst(e.x, e.y, "violet", 14)
-                        end
-                        state.kills = state.kills + 1
-                        grantXP(e.kind == "king" and 5 or 1)
-                        if (state.upgrades.health_drop or 0) > 0 and love.math.random(100) <= math.min(50, 8 * state.upgrades.health_drop) then
-                            state.floor.pickups[state.room] = state.floor.pickups[state.room] or {}
-                            state.floor.pickups[state.room][#state.floor.pickups[state.room] + 1] = {
-                                kind = "health", x = e.x, y = e.y,
-                            }
-                        end
-                        if e.kind == "king" then
-                            impact(e.x, e.y, "gold", 148, 0.62, 9)
-                            burst(e.x, e.y, "gold", 32)
-                            burst(e.x, e.y, "violet", 24)
-                            for _, escort in ipairs(state.enemies) do
-                                burst(escort.x, escort.y, "violet", 9)
-                            end
-                            state.enemies = {}
-                            return
-                        end
-                    end
+                    damageEnemy(j, b.kind == "spell" and 3 or (p.bulletDamage or 1))
                     expired = true
                     break
                 end
@@ -420,12 +419,14 @@ local function updateRoom()
         burst(W / 2, H / 2, "gold", 22)
         announce("LADDER OPEN  /  WALK OVER TO DESCEND")
     elseif room.rune then
-        state.floor.pickups[index] = {rune = room.rune, x = W / 2, y = H / 2, opened = state.time}
+        local pickups = state.floor.pickups[index] or {}
+        pickups.rune, pickups.x, pickups.y, pickups.opened = room.rune, W / 2, H / 2, state.time
+        state.floor.pickups[index] = pickups
         burst(W / 2, H / 2, "violet", 18)
         impact(W / 2, H / 2, "violet", 60, 0.44, 2)
         announce("RUNE DROPPED  /  WALK OVER TO COLLECT")
     elseif room.bossDoor and not doorOpen(index, room.bossDoor) then
-        announce("CROWN GATE REQUIRES BOTH RUNES")
+        announce("CROWN GATE REQUIRES MORE RUNES")
     else
         announce("CHAMBER CLEARED")
     end
@@ -434,46 +435,46 @@ end
 local function collectRune()
     local floor, p = state.floor, state.player
     local pickup = floor.pickups[state.room]
-    if type(pickup) == "table" and pickup.rune then
-        if state.time - pickup.opened < 0.25 or not near(p.x, p.y, pickup.x, pickup.y, 20) then return end
-        floor.pickups[state.room] = nil
+    if not pickup then return end
+    if pickup.rune and state.time - pickup.opened >= 0.25 and near(p.x, p.y, pickup.x, pickup.y, 20) then
         floor.runes[pickup.rune] = true
-    local healed = math.min(2, 6 - p.hp)
-    p.hp = p.hp + healed
-    art.play("rune")
-    burst(pickup.x, pickup.y, "violet", 30)
-    burst(pickup.x, pickup.y, "white", 14)
-    impact(pickup.x, pickup.y, "violet", 95, 0.44, 5)
-    local runeCount = 0
-    for _ in pairs(floor.runes) do runeCount = runeCount + 1 end
-    if runeCount >= floor.runeRequired then
-        announce("RUNE RECOVERED  /  CROWN CRYPT OPEN")
-    elseif healed > 0 then
-        announce("RUNE RECOVERED  /  +" .. healed .. " VITALITY")
-    else
-        announce("RUNE RECOVERED")
-    end
-    elseif type(pickup) == "table" then
-        for i = #pickup, 1, -1 do
-            local mote = pickup[i]
-            if near(p.x, p.y, mote.x, mote.y, 15) then
-                p.hp = math.min(6, p.hp + 1)
-                table.remove(pickup, i)
-                burst(mote.x, mote.y, "red", 12)
-                impact(mote.x, mote.y, "red", 32, 0.24, 1)
-                art.play("rune")
-            end
+        pickup.rune = nil
+        local healed = math.min(2, 6 - p.hp)
+        p.hp = p.hp + healed
+        art.play("rune")
+        burst(pickup.x, pickup.y, "violet", 30)
+        burst(pickup.x, pickup.y, "white", 14)
+        impact(pickup.x, pickup.y, "violet", 95, 0.44, 5)
+        local runeCount = 0
+        for _ in pairs(floor.runes) do runeCount = runeCount + 1 end
+        if runeCount >= floor.runeRequired then
+            announce("RUNE RECOVERED  /  CROWN CRYPT OPEN")
+        elseif healed > 0 then
+            announce("RUNE RECOVERED  /  +" .. healed .. " VITALITY")
+        else
+            announce("RUNE RECOVERED")
         end
-        if #pickup == 0 then floor.pickups[state.room] = nil end
     end
+    for i = #pickup, 1, -1 do
+        local mote = pickup[i]
+        if near(p.x, p.y, mote.x, mote.y, 15) then
+            p.hp = math.min(6, p.hp + 1)
+            table.remove(pickup, i)
+            burst(mote.x, mote.y, "red", 12)
+            impact(mote.x, mote.y, "red", 32, 0.24, 1)
+            art.play("rune")
+        end
+    end
+    if not pickup.rune and #pickup == 0 then floor.pickups[state.room] = nil end
 end
 
 local function beginDescent()
-    local p = state.player
+    local nextPlayer = {}
+    for key, value in pairs(state.player) do nextPlayer[key] = value end
     state.descent = {
         time = 0, duration = DESCENT_TIME,
         floor = floors.new(state.floor.depth + 1, love.math.random),
-        player = spawnPlayer({hp = p.hp, ax = p.ax, ay = p.ay}),
+        player = spawnPlayer(nextPlayer),
     }
     state.bullets = {}
     state.ward = 0
@@ -509,7 +510,7 @@ local function updateStep(dt)
             state.invulnerable = 0.48
             local bossDoor = state.floor.rooms[state.room].bossDoor
             if state.floor.cleared[state.room] and bossDoor and not doorOpen(state.room, bossDoor) then
-                announce("CROWN GATE REQUIRES BOTH RUNES")
+                announce("CROWN GATE REQUIRES MORE RUNES")
             end
         end
         state.dashHeld, state.magicHeld = dash, magic
@@ -592,35 +593,48 @@ local function updateStep(dt)
     end
     state.magicHeld = magic
 
-    state.upgradeTimers.orbit = state.upgradeTimers.orbit - dt
+    local orbs = state.upgrades.orbit or 0
+    for i = #state.enemies, 1, -1 do
+        local enemy = state.enemies[i]
+        if not enemy then break end
+        enemy.orbitCooldown = math.max(0, (enemy.orbitCooldown or 0) - dt)
+        if enemy.orbitCooldown == 0 then
+            for orb = 1, orbs do
+                local ox, oy = orbit.position(p, state.time, orb, orbs)
+                if near(enemy.x, enemy.y, ox, oy, enemyTypes[enemy.kind].radius + 5) then
+                    enemy.orbitCooldown = 0.35
+                    damageEnemy(i, 2)
+                    break
+                end
+            end
+        end
+    end
     state.upgradeTimers.aura = state.upgradeTimers.aura - dt
     state.upgradeTimers.pulse = state.upgradeTimers.pulse - dt
-    if (state.upgrades.orbit or 0) > 0 and state.upgradeTimers.orbit <= 0 then
-        for _, e in ipairs(state.enemies) do
-            local angle = state.time * 2.4 + e.pulse
-            local ox, oy = p.x + math.cos(angle) * 34, p.y + math.sin(angle) * 34
-            if near(e.x, e.y, ox, oy, enemyTypes[e.kind].radius + 8) then e.hp = e.hp - 2 end
-        end
-        state.upgradeTimers.orbit = 0.35
-    end
-    if (state.upgrades.aura or 0) > 0 and state.upgradeTimers.aura <= 0 then
-        for _, e in ipairs(state.enemies) do
-            if near(e.x, e.y, p.x, p.y, 54 + state.upgrades.aura * 8) then e.hp = e.hp - 1 end
+    if state.upgrades.aura and state.upgradeTimers.aura <= 0 then
+        for i = #state.enemies, 1, -1 do
+            local enemy = state.enemies[i]
+            if not enemy then break end
+            if near(enemy.x, enemy.y, p.x, p.y, 54 + state.upgrades.aura * 8) then
+                damageEnemy(i, 1)
+            end
         end
         state.upgradeTimers.aura = 0.65
     end
-    if (state.upgrades.pulse or 0) > 0 and state.upgradeTimers.pulse <= 0 then
+    if state.upgrades.pulse and state.upgradeTimers.pulse <= 0 then
         impact(p.x, p.y, "cyan", 105, 0.42, 2)
-        for _, e in ipairs(state.enemies) do
-            if near(e.x, e.y, p.x, p.y, 95) then
-                e.hp = e.hp - 2
-                local dx, dy = unit(e.x - p.x, e.y - p.y)
-                move(e, dx * 18, dy * 18, enemyTypes[e.kind].radius, false)
+        for i = #state.enemies, 1, -1 do
+            local enemy = state.enemies[i]
+            if not enemy then break end
+            if near(enemy.x, enemy.y, p.x, p.y, 95) then
+                local dx, dy = unit(enemy.x - p.x, enemy.y - p.y)
+                move(enemy, dx * 18, dy * 18, enemyTypes[enemy.kind].radius, false)
+                damageEnemy(i, 2)
             end
         end
         state.upgradeTimers.pulse = math.max(2.5, 7 - state.upgrades.pulse)
     end
-    updateAllies(dt)
+    if state.mode == "play" then updateAllies(dt) end
     if state.mode == "play" then updateEnemies(dt) end
     if state.mode == "play" then
         updateBullets(dt)

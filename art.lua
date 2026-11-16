@@ -1,4 +1,5 @@
 local floors = require("floors")
+local orbit = require("orbit")
 local art = {}
 local g = love.graphics
 local colors = {
@@ -221,7 +222,8 @@ local function enemy(e, time)
     g.setLineWidth(1.5)
     local hit = e.hit > 0
     if e.kind == "slime" then
-        local pulse = time * 2 + e.pulse
+        local phase = (time * 2 + e.pulse) % (3 * math.pi)
+        local pulse = phase <= math.pi and phase or math.pi + (phase - math.pi) / 2
         local visibility = hit and 1 or (0.09 + 0.83 * (0.5 + 0.5 * math.sin(pulse))^2)
         ink(hit and "white" or "lime", visibility * 0.16)
         g.circle("fill", 0, 0, 16, 18)
@@ -328,7 +330,7 @@ local function overlay(state)
     text(titles[state.mode], state.mode == "title" and "title" or "heading", "cyan", 90, 163, 460)
     text(subtitles[state.mode], "body", "muted", 90, 225, 460)
     if state.mode == "title" then
-        text("L STICK MOVE  /  R STICK AIM  /  R1 FIRE  /  L1 DASH  /  A SPELL", "small", "white", 80, 262, 480)
+        text("L STICK MOVE  /  R STICK AIM + FIRE  /  L1 DASH  /  R1 SPELL", "small", "white", 80, 262, 480)
     end
     local action = state.mode == "pause" and "ENTER OR P TO RESUME" or "PRESS START OR ENTER"
     text(action, "body", "lime", 90, 304, 460)
@@ -390,9 +392,9 @@ local function drawActors(state)
     for _, e in ipairs(state.enemies) do enemy(e, state.time) end
     local orbs = state.upgrades.orbit or 0
     for i = 1, orbs do
-        local angle = state.time * 2.4 + i * 2 * math.pi / orbs
+        local x, y = orbit.position(p, state.time, i, orbs)
         ink("violet")
-        g.circle("line", p.x + math.cos(angle) * 34, p.y + math.sin(angle) * 34, 5, 12)
+        g.circle("line", x, y, 5, 12)
     end
     if state.upgrades.aura then
         ink("lime", 0.22)

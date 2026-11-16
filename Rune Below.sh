@@ -2,6 +2,11 @@
 # Manual PortMaster launcher for Rune Below.
 PORT_ROOT="$(cd -- "$(dirname -- "$0")" && pwd)" || exit 1
 GAMEDIR="$PORT_ROOT/rune-below"
+GAME="$GAMEDIR/RuneBelow.love"
+if [ ! -f "$GAME" ] && [ -f "$PORT_ROOT/main.lua" ] && [ -f "$PORT_ROOT/conf.lua" ]; then
+    GAME="$PORT_ROOT"
+fi
+mkdir -p "$GAMEDIR" || exit 1
 cd "$GAMEDIR" || exit 1
 exec > log.txt 2>&1
 
@@ -40,7 +45,7 @@ if [ -n "$GPTOKEYB" ] && [ -n "$LOVE_GPTK" ]; then
     $GPTOKEYB "$LOVE_GPTK" &
 fi
 pm_platform_helper "$LOVE_BINARY"
-$LOVE_RUN "$GAMEDIR/RuneBelow.love"
+$LOVE_RUN "$GAME"
 status=$?
 pm_finish
 exit "$status"

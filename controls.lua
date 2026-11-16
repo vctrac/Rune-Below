@@ -18,9 +18,11 @@ function controls.read(scale, offsetX, offsetY)
         if pad:isGamepad() then
             local gx, gy = stick(pad:getGamepadAxis("leftx"), pad:getGamepadAxis("lefty"), 0.17)
             if mx == 0 and my == 0 then mx, my = gx, gy end
-            local ax, ay = stick(pad:getGamepadAxis("rightx"), pad:getGamepadAxis("righty"), 0.21)
-            return mx, my, ax, ay, x, y, fire or pad:isGamepadDown("rightshoulder"),
-                dash or pad:isGamepadDown("leftshoulder"), magic or pad:isGamepadDown("a"), true
+            local rx, ry = pad:getGamepadAxis("rightx"), pad:getGamepadAxis("righty")
+            local ax, ay = stick(rx, ry, 0.21)
+            local atRim = rx * rx + ry * ry >= 0.92 * 0.92
+            return mx, my, ax, ay, x, y, fire or atRim,
+                dash or pad:isGamepadDown("leftshoulder"), magic or pad:isGamepadDown("rightshoulder"), true
         end
     end
     return mx, my, 0, 0, x, y, fire, dash, magic, false
