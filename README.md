@@ -25,8 +25,8 @@ Rune Below from Ports. If launch fails, check rune-below/log.txt.
 | Right stick | Aim continuously. Push to the rim in any direction to fire. |
 | R1 | Cast a radial spell that clears nearby hostile shots |
 | L1 | Dash in the movement direction or toward your aim while standing |
-| A | Confirm the highlighted upgrade |
 | Start | Begin, pause, resume, or restart after a run |
+| A | Begin, resume, or restart after a run |
 | Select | Quit from title or pause |
 
 The launcher uses PortMaster's SDL controller mapping and LÖVE 11.5 runtime.
@@ -44,16 +44,3 @@ Theme entries live in `floors.lua`. Add an entry with the depth at which it
 starts, its colors, and the generator to use for every applicable floor.
 A generator returns the room list used by `dungeon.lua`, with the start room
 first and the usual reciprocal exits, runes, and boss gate.
-
-## Level ups and upgrades
-
-Defeated enemies grant experience. Level ups pause combat and show three cards:
-the top card maps to Up, the left card maps to Left, and the right card maps to
-Right. Press A to take the highlighted upgrade. Keyboard arrows and Enter work
-on desktop.
-
-The first upgrade pool includes faster fire, heavier rounds, vitality, dash and
-spell cooldowns, ricochet, orbiting wisps, a damaging aura, a timed knockback
-pulse, health motes, and Grave Calling. Grave Calling can reanimate defeated
-non-boss enemies as temporary allies. Health motes and runes are collected by
-walking over them.

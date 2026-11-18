@@ -1,5 +1,4 @@
 local floors = require("floors")
-local orbit = require("orbit")
 local art = {}
 local g = love.graphics
 local colors = {
@@ -177,17 +176,8 @@ local function drawRoom(time, floor, index, sides, x, y)
         text("RECOVER THE RUNES. DEFEAT THE HOLLOW KING.", "small", "muted", 0, 270, W)
         text("FOLLOW THE OPEN DOOR", "small", theme.outline, 0, 302, W)
     end
-    local pickups = floor.pickups[index]
-    if pickups then
-        if pickups.rune then drawRune(pickups, time) end
-        for _, mote in ipairs(pickups) do
-            ink("red")
-            diamond(mote.x, mote.y, 6)
-            ink("white")
-            g.line(mote.x - 3, mote.y, mote.x + 3, mote.y)
-            g.line(mote.x, mote.y - 3, mote.x, mote.y + 3)
-        end
-    end
+    local pickup = floor.pickups[index]
+    if pickup then drawRune(pickup, time) end
     if floor.ladder and floor.ladder.room == index then drawLadder(floor.ladder, time) end
     g.pop()
 end
@@ -286,33 +276,7 @@ local function meter(x, y, label, color, fraction)
     g.rectangle("fill", x, y + 17, 80 * fraction, 3)
 end
 
-local function levelUpOverlay(state)
-    local positions = {{226, 75, "UP"}, {30, 205, "LEFT"}, {422, 205, "RIGHT"}}
-    g.setColor(0.005, 0.012, 0.01, 0.94)
-    g.rectangle("fill", 0, 0, W, 480)
-    text("LEVEL " .. state.level .. " / CHOOSE AN UPGRADE", "heading", "cyan", 0, 22, W)
-    for i, card in ipairs(state.upgradeChoices) do
-        local position = positions[i]
-        local x, y, direction = position[1], position[2], position[3]
-        local selected = state.upgradeSelection == i
-        g.setColor(0.012, 0.031, 0.027)
-        g.rectangle("fill", x, y, 188, 128)
-        ink(card.color, selected and 1 or 0.5)
-        g.setLineWidth(selected and 3 or 1)
-        g.rectangle("line", x, y, 188, 128)
-        text(direction, "small", selected and "white" or "muted", x, y + 12, 188)
-        text(card.title, "body", card.color, x + 8, y + 40, 172)
-        text(card.description, "small", "white", x + 12, y + 68, 164)
-    end
-    g.setLineWidth(1)
-    text("A / ENTER TO CONFIRM", "body", "white", 0, 375, W)
-end
-
 local function overlay(state)
-    if state.mode == "levelup" then
-        levelUpOverlay(state)
-        return
-    end
     if state.mode == "play" then return end
     g.setColor(0.008, 0.018, 0.014, 0.95)
     g.rectangle("fill", 68, 111, 504, 254)
@@ -384,22 +348,7 @@ local function drawActors(state)
         g.setLineWidth(1 + (1 - t) * 1.4)
         g.circle("line", ring.x, ring.y, ring.radius * (0.16 + 0.84 * (1 - (1 - t)^2)), 32)
     end
-    for _, ally in ipairs(state.allies) do
-        ink("violet")
-        g.circle("line", ally.x, ally.y, 12, 12)
-        diamond(ally.x, ally.y, 6)
-    end
     for _, e in ipairs(state.enemies) do enemy(e, state.time) end
-    local orbs = state.upgrades.orbit or 0
-    for i = 1, orbs do
-        local x, y = orbit.position(p, state.time, i, orbs)
-        ink("violet")
-        g.circle("line", x, y, 5, 12)
-    end
-    if state.upgrades.aura then
-        ink("lime", 0.22)
-        g.circle("line", p.x, p.y, 54 + state.upgrades.aura * 8, 36)
-    end
     for _, b in ipairs(state.bullets) do
         ink(b.kind == "gun" and "gold" or (b.kind == "hex" and "red" or "violet"))
         g.setLineWidth(2)
@@ -522,12 +471,7 @@ function art.draw(state, sides, scale, ox, oy, hud)
     g.line(0, hud + H, W, hud + H)
     text(rooms[state.room].name, "heading", "white", 18, 2)
     text("FLOOR " .. floor.depth, "small", floor.theme.outline, 19, 28)
-    text("LV " .. state.level, "small", "cyan", 265, 5)
-    ink("cyan", 0.2)
-    g.rectangle("fill", 307, 11, 66, 3)
-    ink("cyan")
-    g.rectangle("fill", 307, 11, 66 * math.min(1, state.xp / state.nextXP), 3)
-    text("VITALITY", "small", "muted", 265, 17)
+    text("VITALITY", "small", "muted", 265, 7)
     for i = 1, 6 do
         ink("cyan", i <= p.hp and 1 or 0.2)
         diamond(270 + (i - 1) * 15, 32, 4.5)
@@ -541,7 +485,7 @@ function art.draw(state, sides, scale, ox, oy, hud)
     end
     minimap(state, rooms)
     meter(18, 452, "L1  DASH", "cyan", 1 - state.dashCooldown / 0.85)
-    meter(542, 452, "A  SPELL", "violet", 1 - state.magic / 3.4)
+    meter(542, 452, "R1  SPELL", "violet", 1 - state.magic / 3.4)
     if state.descent then
         text("DESCENDING TO FLOOR " .. state.descent.floor.depth, "small", "gold", 111, 455, 418)
     elseif state.messageTime > 0 then text(state.message, "small", "gold", 111, 455, 418)

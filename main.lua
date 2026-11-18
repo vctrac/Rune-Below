@@ -1,7 +1,6 @@
 local floors = require("floors")
 local controls = require("controls")
 local art = require("art")
-local orbit = require("orbit")
 
 local W, H, HUD = 640, 396, 48
 local WALL, GAP = 24, 44
@@ -34,25 +33,9 @@ local function spawnPlayer(player)
     return player
 end
 
-local upgradePool = {
-    {id="grave_calling", title="GRAVE CALLING", description="Defeated foes may rise as temporary allies.", color="violet"},
-    {id="rapid_fire", title="QUICK HANDS", description="Fire your gun 18% faster.", color="gold"},
-    {id="vitality", title="DEEP RESERVES", description="Recover 2 vitality.", color="cyan"},
-    {id="heavy_rounds", title="HEAVY ROUNDS", description="Gunshots deal 1 additional damage.", color="gold"},
-    {id="long_dash", title="AFTERIMAGE", description="Dash cooldown is reduced by 15%.", color="cyan"},
-    {id="arcane_focus", title="ARCANE FOCUS", description="Spell cooldown is reduced by 12%.", color="violet"},
-    {id="ricochet", title="RICOCHET", description="Gunshots bounce off a wall once.", color="gold"},
-    {id="orbit", title="WISP ORBIT", description="A magical orb circles you and harms foes.", color="violet"},
-    {id="aura", title="WITHERING AURA", description="Nearby enemies take periodic damage.", color="lime"},
-    {id="pulse", title="SOUL PULSE", description="A shockwave damages and pushes enemies away.", color="cyan"},
-    {id="health_drop", title="BLOOD HARVEST", description="Foes can drop healing motes.", color="red"},
-}
-
 local function reset()
     state = {
         mode = "title", floor = floors.new(1, love.math.random), room = 1,
-        level = 1, xp = 0, nextXP = 6, upgrades = {},
-        upgradeTimers = {aura = 0, pulse = 2}, allies = {},
         player = spawnPlayer({ax = 1, ay = 0, hp = 6}),
         bullets = {}, sparks = {}, enemies = {}, rings = {}, ghosts = {},
         shake = 0, shakeX = 0, shakeY = 0, flash = 0, muzzle = 0, trail = 0,
@@ -63,59 +46,6 @@ end
 
 local function announce(message)
     state.message, state.messageTime = message, 2.8
-end
-
-local function offerUpgrades()
-    local pool = {}
-    for _, upgrade in ipairs(upgradePool) do
-        local alreadyOwned = upgrade.id == "grave_calling" and state.upgrades.grave_calling
-        if not alreadyOwned then pool[#pool + 1] = upgrade end
-    end
-    state.upgradeChoices = {}
-    for i = 1, 3 do state.upgradeChoices[i] = table.remove(pool, love.math.random(#pool)) end
-    state.upgradeSelection, state.mode = 1, "levelup"
-end
-
-local function grantXP(amount)
-    state.xp = state.xp + amount
-    if state.xp >= state.nextXP and state.mode == "play" then
-        state.xp = state.xp - state.nextXP
-        state.level = state.level + 1
-        state.nextXP = 6 + (state.level - 1) * 3
-        offerUpgrades()
-    end
-end
-
-local function chooseUpgrade()
-    local upgrade = state.upgradeChoices and state.upgradeChoices[state.upgradeSelection]
-    if not upgrade then return end
-    local p = state.player
-    if upgrade.id == "grave_calling" then state.upgrades.grave_calling = true
-    elseif upgrade.id == "ricochet" then state.upgrades.ricochet = (state.upgrades.ricochet or 0) + 1
-    elseif upgrade.id == "orbit" then state.upgrades.orbit = (state.upgrades.orbit or 0) + 1
-    elseif upgrade.id == "aura" then state.upgrades.aura = (state.upgrades.aura or 0) + 1
-    elseif upgrade.id == "pulse" then state.upgrades.pulse = (state.upgrades.pulse or 0) + 1
-    elseif upgrade.id == "health_drop" then state.upgrades.health_drop = (state.upgrades.health_drop or 0) + 1
-    elseif upgrade.id == "rapid_fire" then p.shotInterval = (p.shotInterval or 0.125) * 0.82
-    elseif upgrade.id == "vitality" then p.hp = math.min(6, p.hp + 2)
-    elseif upgrade.id == "heavy_rounds" then p.bulletDamage = (p.bulletDamage or 1) + 1
-    elseif upgrade.id == "long_dash" then p.dashCooldownScale = (p.dashCooldownScale or 1) * 0.85
-    elseif upgrade.id == "arcane_focus" then p.magicCooldownScale = (p.magicCooldownScale or 1) * 0.88 end
-    state.mode, state.upgradeChoices = "play", nil
-    state.dashHeld, state.magicHeld = true, true
-    art.play("upgrade")
-    if state.xp >= state.nextXP then
-        state.xp = state.xp - state.nextXP
-        state.level = state.level + 1
-        state.nextXP = 6 + (state.level - 1) * 3
-        offerUpgrades()
-    end
-end
-
-local function selectUpgrade(direction)
-    if direction == "up" then state.upgradeSelection = 1
-    elseif direction == "left" then state.upgradeSelection = 2
-    elseif direction == "right" then state.upgradeSelection = 3 end
 end
 
 local function doorOpen(index, side)
@@ -155,7 +85,7 @@ local function impact(x, y, color, radius, duration, shake)
 end
 
 local function clearEffects()
-    state.bullets, state.sparks, state.enemies, state.rings, state.ghosts, state.allies = {}, {}, {}, {}, {}, {}
+    state.bullets, state.sparks, state.enemies, state.rings, state.ghosts = {}, {}, {}, {}, {}
     state.shake, state.shakeX, state.shakeY, state.muzzle, state.flash = 0, 0, 0, 0, 0
 end
 
@@ -262,22 +192,7 @@ local function defeatEnemy(index)
         impact(e.x, e.y, enemyTypes[e.kind].color, 33, 0.23, 2)
     end
     table.remove(state.enemies, index)
-    if state.upgrades.grave_calling and e.kind ~= "king"
-        and love.math.random(100) <= 15 then
-        state.allies[#state.allies + 1] = {
-            kind = e.kind, x = e.x, y = e.y, hp = math.max(2, enemyTypes[e.kind].hp),
-            life = 12, attack = 0, pulse = #state.allies + 2,
-        }
-        burst(e.x, e.y, "violet", 14)
-    end
     state.kills = state.kills + 1
-    grantXP(e.kind == "king" and 5 or 1)
-    if (state.upgrades.health_drop or 0) > 0 and love.math.random(100) <= math.min(50, 8 * state.upgrades.health_drop) then
-        state.floor.pickups[state.room] = state.floor.pickups[state.room] or {}
-        state.floor.pickups[state.room][#state.floor.pickups[state.room] + 1] = {
-            kind = "health", x = e.x, y = e.y,
-        }
-    end
     if e.kind == "king" then
         impact(e.x, e.y, "gold", 148, 0.62, 9)
         burst(e.x, e.y, "gold", 32)
@@ -294,32 +209,6 @@ local function damageEnemy(index, damage)
     enemy.hp = enemy.hp - damage
     enemy.hit = 0.09
     if enemy.hp <= 0 then defeatEnemy(index) end
-end
-
-local function updateAllies(dt)
-    for i = #state.allies, 1, -1 do
-        local ally = state.allies[i]
-        ally.life, ally.attack = ally.life - dt, ally.attack - dt
-        local target, closest, targetIndex
-        for index, enemy in ipairs(state.enemies) do
-            local _, _, distance = unit(enemy.x - ally.x, enemy.y - ally.y)
-            if not closest or distance < closest then target, closest, targetIndex = enemy, distance, index end
-        end
-        if target then
-            local ax, ay = unit(target.x - ally.x, target.y - ally.y)
-            if closest > enemyTypes[target.kind].radius + 9 then
-                move(ally, ax * 92 * dt, ay * 92 * dt, 8, false)
-            elseif ally.attack <= 0 then
-                ally.attack = 0.7
-                burst(target.x, target.y, "violet", 5)
-                damageEnemy(targetIndex, 2)
-            end
-        end
-        if ally.life <= 0 or ally.hp <= 0 then
-            burst(ally.x, ally.y, "violet", 7)
-            table.remove(state.allies, i)
-        end
-    end
 end
 
 local function updateEnemies(dt)
@@ -370,19 +259,10 @@ local function updateBullets(dt)
     local p = state.player
     for i = #state.bullets, 1, -1 do
         local b = state.bullets[i]
-        local previousX, previousY = b.x, b.y
         b.x, b.y, b.life = b.x + b.vx * dt, b.y + b.vy * dt, b.life - dt
         local blocked = solid(b.x, b.y, 2, false)
         local expired = b.life <= 0 or blocked
-        if blocked and b.kind == "gun" and state.upgrades.ricochet and (b.bounces or 0) < state.upgrades.ricochet then
-            local hitX = solid(b.x, previousY, 2, false)
-            if hitX then b.vx = -b.vx else b.vy = -b.vy end
-            b.x, b.y = previousX + b.vx * dt, previousY + b.vy * dt
-            b.bounces = (b.bounces or 0) + 1
-            expired = false
-            burst(previousX, previousY, "gold", 5)
-        end
-        if blocked and expired and b.kind ~= "hex" then
+        if blocked and b.kind ~= "hex" then
             burst(b.x, b.y, b.kind == "spell" and "violet" or "gold", 3)
         end
         if not expired and b.kind == "hex" then
@@ -397,7 +277,7 @@ local function updateBullets(dt)
                     burst(b.x, b.y, b.kind == "spell" and "violet" or "gold", 7)
                     state.shake = math.min(9, state.shake + 0.6)
                     art.play("hit")
-                    damageEnemy(j, b.kind == "spell" and 3 or (p.bulletDamage or 1))
+                    damageEnemy(j, b.kind == "spell" and 3 or 1)
                     expired = true
                     break
                 end
@@ -419,9 +299,7 @@ local function updateRoom()
         burst(W / 2, H / 2, "gold", 22)
         announce("LADDER OPEN  /  WALK OVER TO DESCEND")
     elseif room.rune then
-        local pickups = state.floor.pickups[index] or {}
-        pickups.rune, pickups.x, pickups.y, pickups.opened = room.rune, W / 2, H / 2, state.time
-        state.floor.pickups[index] = pickups
+        state.floor.pickups[index] = {rune = room.rune, x = W / 2, y = H / 2, opened = state.time}
         burst(W / 2, H / 2, "violet", 18)
         impact(W / 2, H / 2, "violet", 60, 0.44, 2)
         announce("RUNE DROPPED  /  WALK OVER TO COLLECT")
@@ -436,9 +314,9 @@ local function collectRune()
     local floor, p = state.floor, state.player
     local pickup = floor.pickups[state.room]
     if not pickup then return end
-    if pickup.rune and state.time - pickup.opened >= 0.25 and near(p.x, p.y, pickup.x, pickup.y, 20) then
+    if state.time - pickup.opened >= 0.25 and near(p.x, p.y, pickup.x, pickup.y, 20) then
         floor.runes[pickup.rune] = true
-        pickup.rune = nil
+        floor.pickups[state.room] = nil
         local healed = math.min(2, 6 - p.hp)
         p.hp = p.hp + healed
         art.play("rune")
@@ -455,17 +333,6 @@ local function collectRune()
             announce("RUNE RECOVERED")
         end
     end
-    for i = #pickup, 1, -1 do
-        local mote = pickup[i]
-        if near(p.x, p.y, mote.x, mote.y, 15) then
-            p.hp = math.min(6, p.hp + 1)
-            table.remove(pickup, i)
-            burst(mote.x, mote.y, "red", 12)
-            impact(mote.x, mote.y, "red", 32, 0.24, 1)
-            art.play("rune")
-        end
-    end
-    if not pickup.rune and #pickup == 0 then floor.pickups[state.room] = nil end
 end
 
 local function beginDescent()
@@ -484,10 +351,6 @@ end
 local function updateStep(dt)
     local p = state.player
     state.time = state.time + dt
-    if state.mode == "levelup" then
-        state.dashHeld, state.magicHeld = false, false
-        return
-    end
     if state.mode ~= "play" then return end
     local mx, my, ax, ay, mouseX, mouseY, fire, dash, magic, pad = controls.read(scale, offsetX, offsetY)
     local descent = state.descent
@@ -538,7 +401,7 @@ local function updateStep(dt)
     if dash and not state.dashHeld and state.dashCooldown == 0 then
         if magnitude == 0 then ux, uy = p.ax, p.ay end
         state.dashX, state.dashY = ux, uy
-        state.dash, state.dashCooldown = 0.16, 0.85 * (p.dashCooldownScale or 1)
+        state.dash, state.dashCooldown = 0.16, 0.85
         state.trail = 0
         impact(p.x, p.y, "cyan", 37, 0.2, 3)
         art.play("dash")
@@ -572,13 +435,13 @@ local function updateStep(dt)
 
     if fire and state.shot == 0 then
         projectile(p.x + p.ax * 16, p.y + p.ay * 16, p.ax, p.ay, "gun")
-        state.shot, state.muzzle = p.shotInterval or 0.125, 0.065
+        state.shot, state.muzzle = 0.125, 0.065
         state.shake = math.min(9, state.shake + 0.85)
         burst(p.x + p.ax * 17, p.y + p.ay * 17, "gold", 3)
         art.play("gun")
     end
     if magic and not state.magicHeld and state.magic == 0 then
-        state.magic, state.ward = 3.4 * (p.magicCooldownScale or 1), 0.38
+        state.magic, state.ward = 3.4, 0.38
         for i = 0, 15 do
             local angle = i * TAU / 16
             projectile(p.x, p.y, math.cos(angle), math.sin(angle), "spell")
@@ -593,49 +456,7 @@ local function updateStep(dt)
     end
     state.magicHeld = magic
 
-    local orbs = state.upgrades.orbit or 0
-    for i = #state.enemies, 1, -1 do
-        local enemy = state.enemies[i]
-        if not enemy then break end
-        enemy.orbitCooldown = math.max(0, (enemy.orbitCooldown or 0) - dt)
-        if enemy.orbitCooldown == 0 then
-            for orb = 1, orbs do
-                local ox, oy = orbit.position(p, state.time, orb, orbs)
-                if near(enemy.x, enemy.y, ox, oy, enemyTypes[enemy.kind].radius + 5) then
-                    enemy.orbitCooldown = 0.35
-                    damageEnemy(i, 2)
-                    break
-                end
-            end
-        end
-    end
-    state.upgradeTimers.aura = state.upgradeTimers.aura - dt
-    state.upgradeTimers.pulse = state.upgradeTimers.pulse - dt
-    if state.upgrades.aura and state.upgradeTimers.aura <= 0 then
-        for i = #state.enemies, 1, -1 do
-            local enemy = state.enemies[i]
-            if not enemy then break end
-            if near(enemy.x, enemy.y, p.x, p.y, 54 + state.upgrades.aura * 8) then
-                damageEnemy(i, 1)
-            end
-        end
-        state.upgradeTimers.aura = 0.65
-    end
-    if state.upgrades.pulse and state.upgradeTimers.pulse <= 0 then
-        impact(p.x, p.y, "cyan", 105, 0.42, 2)
-        for i = #state.enemies, 1, -1 do
-            local enemy = state.enemies[i]
-            if not enemy then break end
-            if near(enemy.x, enemy.y, p.x, p.y, 95) then
-                local dx, dy = unit(enemy.x - p.x, enemy.y - p.y)
-                move(enemy, dx * 18, dy * 18, enemyTypes[enemy.kind].radius, false)
-                damageEnemy(i, 2)
-            end
-        end
-        state.upgradeTimers.pulse = math.max(2.5, 7 - state.upgrades.pulse)
-    end
-    if state.mode == "play" then updateAllies(dt) end
-    if state.mode == "play" then updateEnemies(dt) end
+    updateEnemies(dt)
     if state.mode == "play" then
         updateBullets(dt)
         if state.mode == "play" then
@@ -694,24 +515,12 @@ local function menu()
 end
 
 function love.keypressed(key)
-    if state.mode == "levelup" then
-        if key == "up" then selectUpgrade("up")
-        elseif key == "left" then selectUpgrade("left")
-        elseif key == "right" then selectUpgrade("right")
-        elseif key == "return" or key == "space" then chooseUpgrade() end
-    elseif key == "return" then confirm()
+    if key == "return" then confirm()
     elseif key == "p" then menu()
     elseif key == "escape" then love.event.quit() end
 end
 
 function love.gamepadpressed(_, button)
-    if state.mode == "levelup" then
-        if button == "dpup" then selectUpgrade("up")
-        elseif button == "dpleft" then selectUpgrade("left")
-        elseif button == "dpright" then selectUpgrade("right")
-        elseif button == "a" then chooseUpgrade() end
-        return
-    end
     if button == "start" then menu()
     elseif button == "back" and (state.mode == "pause" or state.mode == "title") then love.event.quit()
     elseif button == "a" and state.mode ~= "play" then confirm() end
