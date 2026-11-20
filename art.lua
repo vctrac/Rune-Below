@@ -1,14 +1,17 @@
 local floors = require("floors")
+local sword = require("sword")
+local geometry = require("room_geometry")
 local art = {}
 local g = love.graphics
 local colors = {
     cyan = {0.30, 0.96, 0.91}, lime = {0.52, 0.96, 0.46}, gold = {1, 0.76, 0.32},
     violet = {0.85, 0.44, 1}, red = {1, 0.35, 0.38}, muted = {0.47, 0.63, 0.58},
-    white = {0.88, 0.97, 0.91}, orange = {1, 0.49, 0.19},
+    white = {0.88, 0.97, 0.91}, orange = {1, 0.49, 0.19}, slash = {1, 0.08, 0.18},
 }
 local fonts, sounds = {}, {}
 local outgoingCanvas, incomingCanvas, capturedDescent
-local W, H, GAP = 640, 396, 44
+local W, H, GAP = geometry.width, geometry.height, geometry.gap
+local wall_border = geometry.border
 
 local function ink(name, alpha)
     local c = colors[name] or name
@@ -40,7 +43,7 @@ function art.load()
         fonts[key] = g.newFont(size)
     end
     local notes = {
-        gun = {0.08, 195, -110, 0.13}, dash = {0.13, 220, 270, 0.10},
+        gun = {0.08, 195, -110, 0.13}, dash = {0.13, 220, 270, 0.10}, sword = {0.13, 510, -390, 0.12},
         magic = {0.26, 305, 440, 0.12}, hurt = {0.19, 145, -75, 0.18},
         clear = {0.31, 392, 275, 0.12}, descent = {0.38, 290, -185, 0.12},
         hit = {0.048, 330, -210, 0.065}, explode = {0.22, 184, -135, 0.17},
@@ -68,33 +71,61 @@ function art.play(name)
     sounds[name]:play()
 end
 
+local function drawBreakableDoor(x, y, horizontal, damage)
+    g.push()
+    g.translate(x, y)
+    if not horizontal then g.rotate(math.pi / 2) end
+    local width = 2 * GAP
+    g.setColor(0.16, 0.07, 0.025)
+    g.rectangle("fill", -GAP, -7, width, 14)
+    ink("orange")
+    g.setLineWidth(1.5)
+    g.rectangle("line", -GAP, -7, width, 14)
+    for offset = -GAP + 13, GAP - 1, 13 do
+        g.line(offset, -7, offset, 7)
+    end
+    ink("gold")
+    g.line(-12, -4, 12, 4)
+    g.line(-12, 4, 12, -4)
+    if damage > 0 then g.line(-GAP + 2, 7, -GAP + 8, 0, -GAP + 4, -3, -GAP + 10, -7) end
+    if damage > 1 then g.line(GAP - 2, -7, GAP - 8, 0, GAP - 4, 3, GAP - 10, 7) end
+    g.pop()
+end
+
 local function wall(time, floor, room, index, side)
     local outline = floor.theme.outline
     local horizontal = side == "up" or side == "down"
     local length = horizontal and W or H
-    local fixed = (side == "up" or side == "left") and 24 or (horizontal and H - 24 or W - 24)
+    local fixed = (side == "up" or side == "left") and wall_border or (horizontal and H - wall_border or W - wall_border)
     local function line(a, b, color)
         if horizontal then etchedLine(a, fixed, b, fixed, color)
         else etchedLine(fixed, a, fixed, b, color) end
     end
-    if not room.exits[side] then
-        line(24, length - 24, outline)
-        return
-    end
     local a, b = length / 2 - GAP, length / 2 + GAP
-    line(24, a, outline)
-    line(b, length - 24, outline)
-    local open = floors.doorOpen(floor, index, side)
-    if not open then line(a, b, side == room.bossDoor and "violet" or "red") end
+    local hasExit = room.exits[side]
+    local layout = room.layout or geometry.standard
+    for _, span in ipairs(layout.walls[side]) do
+        if not hasExit then
+            line(span[1], span[2], outline)
+        else
+            if span[1] < a then line(span[1], math.min(span[2], a), outline) end
+            if span[2] > b then line(math.max(span[1], b), span[2], outline) end
+        end
+    end
+    if not hasExit then return end
+    local door, damage = floors.doorState(floor, index, side)
+    local open = door == "open"
+    local x, y = fixed, length / 2
+    if horizontal then x, y = length / 2, fixed end
+    if door == "locked" then line(a, b, "violet")
+    elseif door == "breakable" then drawBreakableDoor(x, y, horizontal, damage) end
     for _, endpoint in ipairs({a, b}) do
-        local x, y = fixed, endpoint
-        if horizontal then x, y = endpoint, fixed end
-        ink(open and "cyan" or "gold", 0.85)
-        diamond(x, y, 4)
+        local nx, ny = fixed, endpoint
+        if horizontal then nx, ny = endpoint, fixed end
+        ink(open and "cyan" or (door == "breakable" and "orange" or "gold"), 0.85)
+        diamond(nx, ny, 4)
     end
     if open then
-        local x, y = fixed, length / 2
-        if horizontal then x, y = length / 2, fixed end
         g.push()
         g.translate(x, y)
         g.rotate(({left = math.pi, right = 0, up = -math.pi / 2, down = math.pi / 2})[side])
@@ -151,11 +182,20 @@ local function drawRoom(time, floor, index, sides, x, y)
     ink(theme.stone)
     g.rectangle("fill", 0, 0, W, H)
     ink(theme.ground)
-    g.rectangle("fill", 24, 24, W - 48, H - 48)
+    g.rectangle("fill", wall_border, wall_border, W - 2 * wall_border, H - 2 * wall_border)
+
     ink(theme.outline, 0.09)
     g.setLineWidth(1)
-    for gx = 48, W - 48, 32 do g.line(gx, 24, gx, H - 24) end
-    for gy = 38, H - 24, 32 do g.line(24, gy, W - 24, gy) end
+    -- for gx = 48, W - 48, 32 do g.line(gx, 24, gx, H - 24) end
+    -- for gy = 38, H - 24, 32 do g.line(24, gy, W - 24, gy) end
+    local layout = room.layout or geometry.standard
+    for _, block in ipairs(layout.blockers) do
+        ink(layout.name == "island" and theme.pillar or theme.stone)
+        g.polygon("fill", block.points)
+        for _, edge in ipairs(block.outline) do
+            etchedLine(edge[1], edge[2], edge[3], edge[4], theme.outline)
+        end
+    end
     for _, side in ipairs(sides) do wall(time, floor, room, index, side) end
     for _, pillar in ipairs(room.pillars) do
         local px, py = pillar[1], pillar[2]
@@ -174,7 +214,7 @@ local function drawRoom(time, floor, index, sides, x, y)
     end
     if room.kind == "start" then
         text("RECOVER THE RUNES. DEFEAT THE HOLLOW KING.", "small", "muted", 0, 270, W)
-        text("FOLLOW THE OPEN DOOR", "small", theme.outline, 0, 302, W)
+        text("SHOOT OR SLASH ORANGE BARRICADES", "small", theme.outline, 0, 302, W)
     end
     local pickup = floor.pickups[index]
     if pickup then drawRune(pickup, time) end
@@ -205,66 +245,78 @@ local function star(radius)
     end
     g.polygon("line", points)
 end
-
+local draw_by_type = {
+  default = function(e, time)
+    local hit = e.hit > 0
+    ink("red", 0.55 + 0.35 * math.sin(time * 4)^2)
+    g.circle("line", 0, 0, 25, 8)
+    ink(hit and "white" or "red")
+    g.polygon("line", -15, -11, -7, -4, 0, -14, 7, -4, 15, -11, 10, 8, -10, 8)
+    diamond(0, 1, 4)
+    g.line(-16, 33, -16 + 32 * e.hp / 36, 33)
+  end,
+  slime = function(e, time)
+    local phase = (time * 2 + e.pulse) % (3 * math.pi)
+    local pulse = phase <= math.pi and phase or math.pi + (phase - math.pi) / 2
+    local visibility = e.hit > 0 and 1 or (0.09 + 0.83 * (0.5 + 0.5 * math.sin(pulse))^2)
+    ink(e.hit > 0 and "white" or "lime", visibility * 0.16)
+    g.circle("fill", 0, 0, 16, 18)
+    ink(e.hit > 0 and "white" or "lime", visibility)
+    g.circle("line", 0, 0, 15 + math.sin(pulse) * 1.3, 18)
+    g.circle("line", 4, -3, 3, 8)
+  end,
+  spirit = function(e, time)
+    local hit = e.hit > 0
+    local warning = e.phase == "warning"
+    local charge = warning and (1 - e.timer / 0.66) or 0
+    local red = e.phase == "strike" or (warning and math.floor(time * (10 + 7 * charge)) % 2 == 0)
+    local color = red and "red" or "white"
+    if warning then
+      ink("red", 0.09 + charge * 0.08)
+      g.circle("fill", 0, 0, e.strikeRadius, 36)
+      ink("red", 0.55 + charge * 0.4)
+      g.circle("line", 0, 0, e.strikeRadius, 36)
+      g.circle("line", 0, 0, 14 + (e.strikeRadius - 14) * charge, 28)
+    end
+    ink(color, 0.18)
+    g.circle("fill", 0, 0, 18, 16)
+    ink(hit and "white" or color)
+    local bob = math.sin(time * 7 + e.pulse) * 2
+    g.line(-10, bob + 9, -9, bob - 3, -5, bob - 9, 0, bob - 12, 5, bob - 9,
+      9, bob - 3, 10, bob + 9, 4, bob + 5, 0, bob + 10, -4, bob + 5, -10, bob + 9)
+    g.points(-3, bob - 3, 3, bob - 3)
+  end,
+  spark = function(e, time)
+    local proximity = e.proximity or 0
+    local blink = (0.5 + 0.5 * math.sin(time * 16 + proximity * 14))^2
+    local bright = e.hit > 0 or (proximity > 0.55 and blink > 0.65)
+    ink("orange", 0.12 + proximity * 0.38 * blink)
+    g.circle("fill", 0, 0, 12 + proximity * 9 * blink, 14)
+    ink(bright and "white" or "orange", 0.72 + 0.28 * blink)
+    g.rotate(time * 2.8)
+    star(11 + proximity * 3 * blink)
+  end,
+  bone = function(e, time)
+    local hit = e.hit > 0
+    ink(hit and "white" or "gold")
+    g.polygon("line", -11, -4, -6, -11, 6, -11, 11, -4, 8, 4, 5, 4, 5, 9, -5, 9, -5, 4, -8, 4)
+    g.line(-6, -3, -3, -1)
+    g.line(6, -3, 3, -1)
+  end,
+  hex = function(e, time)
+    local hit = e.hit > 0
+    ink(hit and "white" or "violet")
+    g.polygon("line", 0, -14, 12, 8, 6, 6, 0, 11, -6, 6, -12, 8)
+    diamond(0, 0, 4)
+  end
+}
 local function enemy(e, time)
     g.push()
     g.translate(e.x, e.y)
     g.setLineWidth(1.5)
-    local hit = e.hit > 0
-    if e.kind == "slime" then
-        local phase = (time * 2 + e.pulse) % (3 * math.pi)
-        local pulse = phase <= math.pi and phase or math.pi + (phase - math.pi) / 2
-        local visibility = hit and 1 or (0.09 + 0.83 * (0.5 + 0.5 * math.sin(pulse))^2)
-        ink(hit and "white" or "lime", visibility * 0.16)
-        g.circle("fill", 0, 0, 16, 18)
-        ink(hit and "white" or "lime", visibility)
-        g.circle("line", 0, 0, 15 + math.sin(pulse) * 1.3, 18)
-        g.circle("line", 4, -3, 3, 8)
-    elseif e.kind == "spirit" then
-        local warning = e.phase == "warning"
-        local charge = warning and (1 - e.timer / 0.66) or 0
-        local red = e.phase == "strike" or (warning and math.floor(time * (10 + 7 * charge)) % 2 == 0)
-        local color = red and "red" or "white"
-        if warning then
-            ink("red", 0.09 + charge * 0.08)
-            g.circle("fill", 0, 0, e.strikeRadius, 36)
-            ink("red", 0.55 + charge * 0.4)
-            g.circle("line", 0, 0, e.strikeRadius, 36)
-            g.circle("line", 0, 0, 14 + (e.strikeRadius - 14) * charge, 28)
-        end
-        ink(color, 0.18)
-        g.circle("fill", 0, 0, 18, 16)
-        ink(hit and "white" or color)
-        local bob = math.sin(time * 7 + e.pulse) * 2
-        g.line(-10, bob + 9, -9, bob - 3, -5, bob - 9, 0, bob - 12, 5, bob - 9,
-            9, bob - 3, 10, bob + 9, 4, bob + 5, 0, bob + 10, -4, bob + 5, -10, bob + 9)
-        g.points(-3, bob - 3, 3, bob - 3)
-    elseif e.kind == "spark" then
-        local proximity = e.proximity or 0
-        local blink = (0.5 + 0.5 * math.sin(time * 16 + proximity * 14))^2
-        local bright = hit or (proximity > 0.55 and blink > 0.65)
-        ink("orange", 0.12 + proximity * 0.38 * blink)
-        g.circle("fill", 0, 0, 12 + proximity * 9 * blink, 14)
-        ink(bright and "white" or "orange", 0.72 + 0.28 * blink)
-        g.rotate(time * 2.8)
-        star(11 + proximity * 3 * blink)
-    elseif e.kind == "bone" then
-        ink(hit and "white" or "gold")
-        g.polygon("line", -11, -4, -6, -11, 6, -11, 11, -4, 8, 4, 5, 4, 5, 9, -5, 9, -5, 4, -8, 4)
-        g.line(-6, -3, -3, -1)
-        g.line(6, -3, 3, -1)
-    elseif e.kind == "hex" then
-        ink(hit and "white" or "violet")
-        g.polygon("line", 0, -14, 12, 8, 6, 6, 0, 11, -6, 6, -12, 8)
-        diamond(0, 0, 4)
-    else
-        ink("red", 0.55 + 0.35 * math.sin(time * 4)^2)
-        g.circle("line", 0, 0, 25, 8)
-        ink(hit and "white" or "red")
-        g.polygon("line", -15, -11, -7, -4, 0, -14, 7, -4, 15, -11, 10, 8, -10, 8)
-        diamond(0, 1, 4)
-        g.line(-16, 33, -16 + 32 * e.hp / 36, 33)
-    end
+    local fn = draw_by_type[e.kind] or draw_by_type.default
+    fn(e, time)
+
     g.pop()
 end
 
@@ -294,7 +346,8 @@ local function overlay(state)
     text(titles[state.mode], state.mode == "title" and "title" or "heading", "cyan", 90, 163, 460)
     text(subtitles[state.mode], "body", "muted", 90, 225, 460)
     if state.mode == "title" then
-        text("L STICK MOVE  /  R STICK AIM + FIRE  /  L1 DASH  /  R1 SPELL", "small", "white", 80, 262, 480)
+        text("L STICK MOVE  /  R STICK AIM + FIRE", "small", "white", 80, 254, 480)
+        text("L1 DASH  /  R1 SWORD  /  Y SPELL", "small", "white", 80, 274, 480)
     end
     local action = state.mode == "pause" and "ENTER OR P TO RESUME" or "PRESS START OR ENTER"
     text(action, "body", "lime", 90, 304, 460)
@@ -337,6 +390,20 @@ local function minimap(state, rooms)
     end
 end
 
+local function drawSword(p, swing)
+    local progress = swing.age / sword.duration
+    local fade = math.max(0, (progress - 0.45) / 0.55)
+    local alpha = 1 - fade^2
+    local angle = (math.atan2 or math.atan)(swing.ay, swing.ax)
+    local radius = sword.radius(progress)
+    ink("slash", alpha * 0.24)
+    g.setLineWidth(8 - 4 * progress)
+    g.arc("line", "open", p.x, p.y, radius, angle - sword.halfAngle, angle + sword.halfAngle, 24)
+    ink("slash", alpha)
+    g.setLineWidth(4 - 2 * progress)
+    g.arc("line", "open", p.x, p.y, radius, angle - sword.halfAngle, angle + sword.halfAngle, 24)
+end
+
 local function drawActors(state)
     local p = state.player
     for _, ghost in ipairs(state.ghosts) do
@@ -366,6 +433,7 @@ local function drawActors(state)
     end
     local blink = state.invulnerable > 0 and math.floor(state.time * 24) % 2 == 0
     actor(p.x, p.y, p.ax, p.ay, blink and 0.45 or 1)
+    if state.swing then drawSword(p, state.swing) end
     if state.muzzle > 0 then
         local opacity = state.muzzle / 0.065
         g.push()
@@ -476,21 +544,20 @@ function art.draw(state, sides, scale, ox, oy, hud)
         ink("cyan", i <= p.hp and 1 or 0.2)
         diamond(270 + (i - 1) * 15, 32, 4.5)
     end
-    local collected = 0
-    for _ in pairs(floor.runes) do collected = collected + 1 end
-    text("RUNES " .. collected .. "/" .. floor.runeRequired, "small", "muted", 404, 7)
+    text("RUNES " .. floors.runeCount(floor) .. "/" .. floor.runeRequired, "small", "muted", 404, 7)
     for i = 1, floor.runeRequired do
         ink("violet", floor.runes[i] and 1 or 0.24)
         diamond(411 + (i - 1) * 17, 32, 6)
     end
     minimap(state, rooms)
     meter(18, 452, "L1  DASH", "cyan", 1 - state.dashCooldown / 0.85)
-    meter(542, 452, "R1  SPELL", "violet", 1 - state.magic / 3.4)
+    meter(114, 452, "R1  SWORD", "slash", 1 - state.swordCooldown / sword.cooldown)
+    meter(542, 452, "Y  SPELL", "violet", 1 - state.magic / 3.4)
     if state.descent then
-        text("DESCENDING TO FLOOR " .. state.descent.floor.depth, "small", "gold", 111, 455, 418)
-    elseif state.messageTime > 0 then text(state.message, "small", "gold", 111, 455, 418)
+        text("DESCENDING TO FLOOR " .. state.descent.floor.depth, "small", "gold", 204, 455, 325)
+    elseif state.messageTime > 0 then text(state.message, "small", "gold", 204, 455, 325)
     elseif rooms[state.room].foes and not floor.cleared[state.room] then
-        text(#state.enemies .. " HOSTILES  /  DOORS SEALED", "small", "red", 111, 455, 418)
+        text(#state.enemies .. " HOSTILES", "small", "red", 204, 455, 325)
     end
     overlay(state)
     g.pop()

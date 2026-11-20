@@ -1,14 +1,23 @@
 local floors = require("floors")
 local controls = require("controls")
 local art = require("art")
+local sword = require("sword")
+local geometry = require("room_geometry")
 
-local W, H, HUD = 640, 396, 48
-local WALL, GAP = 24, 44
+local W, H, HUD = geometry.width, geometry.height, 48
+local WALL, GAP = geometry.border, geometry.gap
 local RADIUS = 9
 local DESCENT_TIME = 1.15
 local TAU = 2 * math.pi
 local state, scale, offsetX, offsetY = nil, 1, 0, 0
 local sides = {"left", "right", "up", "down"}
+local doorways = {
+    left = {x = WALL, y = H / 2, nx = -1, ny = 0},
+    right = {x = W - WALL, y = H / 2, nx = 1, ny = 0},
+    up = {x = W / 2, y = WALL, nx = 0, ny = -1},
+    down = {x = W / 2, y = H - WALL, nx = 0, ny = 1},
+}
+local atan2 = math.atan2 or math.atan
 local enemyTypes = {
     slime = {hp = 4, speed = 20, radius = 16, color = "lime"},
     spirit = {hp = 5, radius = 13, color = "white"},
@@ -36,11 +45,12 @@ end
 local function reset()
     state = {
         mode = "title", floor = floors.new(1, love.math.random), room = 1,
-        player = spawnPlayer({ax = 1, ay = 0, hp = 6}),
+        player = spawnPlayer({ax = 1, ay = 0, moveX = 1, moveY = 0, hp = 6}),
         bullets = {}, sparks = {}, enemies = {}, rings = {}, ghosts = {},
         shake = 0, shakeX = 0, shakeY = 0, flash = 0, muzzle = 0, trail = 0,
         time = 0, shot = 0, dash = 0, dashCooldown = 0, ward = 0, magic = 0, invulnerable = 0,
-        message = "", messageTime = 0, kills = 0, dashHeld = true, magicHeld = true,
+        swordCooldown = 0,
+        message = "", messageTime = 0, kills = 0, dashHeld = true, swordHeld = true, magicHeld = true,
     }
 end
 
@@ -54,14 +64,19 @@ end
 
 local function solid(x, y, r, useDoors)
     local room = state.floor.rooms[state.room]
+    if geometry.blocked(room, x, y, r) then return true end
     for _, pillar in ipairs(room.pillars) do
         if near(x, y, pillar[1], pillar[2], r + 15) then return true end
     end
-    if x < WALL + r and not (useDoors and math.abs(y - H / 2) <= GAP - r and doorOpen(state.room, "left")) then return true end
-    if x > W - WALL - r and not (useDoors and math.abs(y - H / 2) <= GAP - r and doorOpen(state.room, "right")) then return true end
-    if y < WALL + r and not (useDoors and math.abs(x - W / 2) <= GAP - r and doorOpen(state.room, "up")) then return true end
-    if y > H - WALL - r and not (useDoors and math.abs(x - W / 2) <= GAP - r and doorOpen(state.room, "down")) then return true end
-    return false
+    local side, offset
+    if x < WALL + r then side, offset = "left", y - H / 2
+    elseif x > W - WALL - r then side, offset = "right", y - H / 2
+    elseif y < WALL + r then side, offset = "up", x - W / 2
+    elseif y > H - WALL - r then side, offset = "down", x - W / 2
+    else return false end
+    if math.abs(offset) > GAP - r then return true end
+    if useDoors and doorOpen(state.room, side) then return false end
+    return true, side
 end
 
 local function move(actor, dx, dy, radius, useDoors)
@@ -84,14 +99,25 @@ local function impact(x, y, color, radius, duration, shake)
     state.shake = math.min(9, state.shake + shake)
 end
 
+local function hitDoor(side, damage, x, y)
+    local hp = floors.damageDoor(state.floor, state.room, side, damage)
+    if not hp then return false end
+    burst(x, y, "orange", hp == 0 and 20 or 6)
+    art.play(hp == 0 and "explode" or "hit")
+    if hp == 0 then impact(x, y, "orange", 45, 0.28, 3) end
+    return true
+end
+
 local function clearEffects()
     state.bullets, state.sparks, state.enemies, state.rings, state.ghosts = {}, {}, {}, {}, {}
+    state.swing = nil
     state.shake, state.shakeX, state.shakeY, state.muzzle, state.flash = 0, 0, 0, 0, 0
 end
 
 local function enter(side, dx, dy)
     local old = state.room
-    local nextRoom = state.floor.rooms[old].exits[side]
+    local floor = state.floor
+    local nextRoom = floor.rooms[old].exits[side]
     if not doorOpen(old, side) then return end
     local p = state.player
     state.room = nextRoom
@@ -100,16 +126,20 @@ local function enter(side, dx, dy)
     if dy ~= 0 then p.y = dy > 0 and WALL + 25 or H - WALL - 25 end
     clearEffects()
     state.dash, state.ward = 0, 0
-    if not state.floor.cleared[nextRoom] then
-        for index, spawn in ipairs(state.floor.rooms[nextRoom].foes or {}) do
+    local enemies = floor.enemies[nextRoom]
+    if not enemies then
+        enemies = {}
+        floor.enemies[nextRoom] = enemies
+        for index, spawn in ipairs(floor.rooms[nextRoom].foes or {}) do
             local kind = spawn[1]
-            state.enemies[index] = {
+            enemies[index] = {
                 kind = kind, x = spawn[2], y = spawn[3], hp = enemyTypes[kind].hp,
                 fire = 0.8 + index * 0.24, turn = index % 2 == 0 and 1 or -1, avoid = 0,
                 timer = 1 + index * 0.3, phase = "cooldown", hit = 0, pulse = index * 1.7,
             }
         end
     end
+    state.enemies = enemies
 end
 
 local function projectile(x, y, ax, ay, kind)
@@ -197,10 +227,11 @@ local function defeatEnemy(index)
         impact(e.x, e.y, "gold", 148, 0.62, 9)
         burst(e.x, e.y, "gold", 32)
         burst(e.x, e.y, "violet", 24)
-        for _, escort in ipairs(state.enemies) do
+        for i = #state.enemies, 1, -1 do
+            local escort = state.enemies[i]
             burst(escort.x, escort.y, "violet", 9)
+            state.enemies[i] = nil
         end
-        state.enemies = {}
     end
 end
 
@@ -209,6 +240,52 @@ local function damageEnemy(index, damage)
     enemy.hp = enemy.hp - damage
     enemy.hit = 0.09
     if enemy.hp <= 0 then defeatEnemy(index) end
+end
+
+local function swordDoorContact(p, swing, radius, door)
+    -- Project onto the door's normal and tangent, then intersect the door's angle range with the slash.
+    local nx, ny = door.nx, door.ny
+    local dx, dy = door.x - p.x, door.y - p.y
+    local depth = dx * nx + dy * ny
+    if depth <= 0 or depth > radius then return end
+    local offset = dy * nx - dx * ny
+    local heading = atan2(swing.ay * nx - swing.ax * ny, swing.ax * nx + swing.ay * ny)
+    local first = math.max(heading - sword.halfAngle, atan2(offset - GAP, depth))
+    local last = math.min(heading + sword.halfAngle, atan2(offset + GAP, depth))
+    if first > last then return end
+    local tangent = depth * math.tan(math.max(first, math.min(0, last)))
+    if depth^2 + tangent^2 > radius^2 then return end
+    return p.x + depth * nx - tangent * ny, p.y + depth * ny + tangent * nx
+end
+
+local function updateSword(dt)
+    local swing = state.swing
+    if not swing then return end
+    local p = state.player
+    local room = state.floor.rooms[state.room]
+    swing.age = math.min(sword.duration, swing.age + dt)
+    local radius = sword.radius(swing.age / sword.duration)
+    local minFacing = math.cos(sword.halfAngle)
+    for i = #state.enemies, 1, -1 do
+        local e = state.enemies[i]
+        local ax, ay, distance = unit(e.x - p.x, e.y - p.y)
+        if not swing.hit[e] and distance <= radius + enemyTypes[e.kind].radius
+            and (distance == 0 or ax * swing.ax + ay * swing.ay >= minFacing)
+            and not geometry.blocksLine(room, p.x, p.y, e.x, e.y) then
+            swing.hit[e] = true
+            burst(e.x, e.y, "slash", 8)
+            art.play("hit")
+            damageEnemy(i, sword.damage)
+            if #state.enemies == 0 then break end
+        end
+    end
+    for _, side in ipairs(sides) do
+        if floors.doorState(state.floor, state.room, side) == "breakable" then
+            local x, y = swordDoorContact(p, swing, radius, doorways[side])
+            if x and not geometry.blocksLine(room, p.x, p.y, x, y) then hitDoor(side, sword.damage, x, y) end
+        end
+    end
+    if swing.age >= sword.duration then state.swing = nil end
 end
 
 local function updateEnemies(dt)
@@ -257,13 +334,19 @@ end
 
 local function updateBullets(dt)
     local p = state.player
+    local room = state.floor.rooms[state.room]
     for i = #state.bullets, 1, -1 do
         local b = state.bullets[i]
+        local x, y = b.x, b.y
         b.x, b.y, b.life = b.x + b.vx * dt, b.y + b.vy * dt, b.life - dt
-        local blocked = solid(b.x, b.y, 2, false)
+        local blocked, side = solid(b.x, b.y, 2, false)
+        blocked = blocked or geometry.blocksLine(room, x, y, b.x, b.y)
         local expired = b.life <= 0 or blocked
         if blocked and b.kind ~= "hex" then
-            burst(b.x, b.y, b.kind == "spell" and "violet" or "gold", 3)
+            local hit = side and b.life > 0 and hitDoor(side, b.kind == "spell" and 3 or 1, b.x, b.y)
+            if not hit then
+                burst(b.x, b.y, b.kind == "spell" and "violet" or "gold", 3)
+            end
         end
         if not expired and b.kind == "hex" then
             if near(b.x, b.y, p.x, p.y, RADIUS + 4) then
@@ -323,9 +406,7 @@ local function collectRune()
         burst(pickup.x, pickup.y, "violet", 30)
         burst(pickup.x, pickup.y, "white", 14)
         impact(pickup.x, pickup.y, "violet", 95, 0.44, 5)
-        local runeCount = 0
-        for _ in pairs(floor.runes) do runeCount = runeCount + 1 end
-        if runeCount >= floor.runeRequired then
+        if floors.bossUnlocked(floor) then
             announce("RUNE RECOVERED  /  CROWN CRYPT OPEN")
         elseif healed > 0 then
             announce("RUNE RECOVERED  /  +" .. healed .. " VITALITY")
@@ -345,6 +426,7 @@ local function beginDescent()
     }
     state.bullets = {}
     state.ward = 0
+    state.swing = nil
     art.play("descent")
 end
 
@@ -352,16 +434,17 @@ local function updateStep(dt)
     local p = state.player
     state.time = state.time + dt
     if state.mode ~= "play" then return end
-    local mx, my, ax, ay, mouseX, mouseY, fire, dash, magic, pad = controls.read(scale, offsetX, offsetY)
+    local mx, my, ax, ay, mouseX, mouseY, fire, dash, swing, magic, pad = controls.read(scale, offsetX, offsetY)
     local descent = state.descent
     if descent then
         descent.time = descent.time + dt
-        state.dashHeld, state.magicHeld = dash, magic
+        state.dashHeld, state.swordHeld, state.magicHeld = dash, swing, magic
         if descent.time >= descent.duration then
             state.floor, state.room, state.player = descent.floor, 1, descent.player
             state.descent = nil
             clearEffects()
             state.dash, state.dashCooldown, state.shot, state.magic, state.invulnerable = 0, 0, 0, 0, 0
+            state.swordCooldown = 0
             announce("FLOOR " .. state.floor.depth)
         end
         return
@@ -372,11 +455,11 @@ local function updateStep(dt)
             state.travel = nil
             state.invulnerable = 0.48
             local bossDoor = state.floor.rooms[state.room].bossDoor
-            if state.floor.cleared[state.room] and bossDoor and not doorOpen(state.room, bossDoor) then
+            if bossDoor and not doorOpen(state.room, bossDoor) then
                 announce("CROWN GATE REQUIRES MORE RUNES")
             end
         end
-        state.dashHeld, state.magicHeld = dash, magic
+        state.dashHeld, state.swordHeld, state.magicHeld = dash, swing, magic
         return
     end
 
@@ -389,6 +472,7 @@ local function updateStep(dt)
     state.shot = math.max(0, state.shot - dt)
     state.dash = math.max(0, state.dash - dt)
     state.dashCooldown = math.max(0, state.dashCooldown - dt)
+    state.swordCooldown = math.max(0, state.swordCooldown - dt)
     state.invulnerable = math.max(0, state.invulnerable - dt)
     state.magic = math.max(0, state.magic - dt)
     state.ward = math.max(0, state.ward - dt)
@@ -398,6 +482,7 @@ local function updateStep(dt)
     end
     if ax ~= 0 or ay ~= 0 then p.ax, p.ay = unit(ax, ay) end
     local ux, uy, magnitude = unit(mx, my)
+    if magnitude > 0 then p.moveX, p.moveY = ux, uy end
     if dash and not state.dashHeld and state.dashCooldown == 0 then
         if magnitude == 0 then ux, uy = p.ax, p.ay end
         state.dashX, state.dashY = ux, uy
@@ -434,12 +519,20 @@ local function updateStep(dt)
     end
 
     if fire and state.shot == 0 then
-        projectile(p.x + p.ax * 16, p.y + p.ay * 16, p.ax, p.ay, "gun")
+        local x, y = p.x + p.ax * 16, p.y + p.ay * 16
+        if geometry.blocksLine(state.floor.rooms[state.room], p.x, p.y, x, y) then x, y = p.x, p.y end
+        projectile(x, y, p.ax, p.ay, "gun")
         state.shot, state.muzzle = 0.125, 0.065
         state.shake = math.min(9, state.shake + 0.85)
         burst(p.x + p.ax * 17, p.y + p.ay * 17, "gold", 3)
         art.play("gun")
     end
+    if swing and not state.swordHeld and state.swordCooldown == 0 then
+        state.swing = {ax = p.moveX, ay = p.moveY, age = 0, hit = {}}
+        state.swordCooldown = sword.cooldown
+        art.play("sword")
+    end
+    state.swordHeld = swing
     if magic and not state.magicHeld and state.magic == 0 then
         state.magic, state.ward = 3.4, 0.38
         for i = 0, 15 do
@@ -456,6 +549,7 @@ local function updateStep(dt)
     end
     state.magicHeld = magic
 
+    updateSword(dt)
     updateEnemies(dt)
     if state.mode == "play" then
         updateBullets(dt)

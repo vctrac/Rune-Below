@@ -1,3 +1,4 @@
+local geometry = require("room_geometry")
 local dungeon = {}
 local SIZE = 5
 local unpack = table.unpack or unpack
@@ -22,11 +23,23 @@ local pillarPlans = {
     {},
 }
 local specials = {"slime", "spirit", "spark"}
+local packs = {
+    {kind = "slime", count = 5},
+    {kind = "spark", count = 4},
+    {kind = "bone", count = 4},
+    {kind = "hex", count = 3},
+}
 local spawnPoints = {
     {127, 101}, {127, 295}, {207, 213}, {280, 132}, {280, 264},
     {360, 132}, {360, 264}, {433, 183}, {513, 101}, {513, 295},
     {213, 272}, {427, 124},
 }
+local layoutSpawnPoints = {}
+for _, y in ipairs({102, 198, 294}) do
+    for _, x in ipairs({122, 200, 278, 362, 440, 518}) do
+        layoutSpawnPoints[#layoutSpawnPoints + 1] = {x, y}
+    end
+end
 
 local function shuffled(values, random)
     local copy = {unpack(values)}
@@ -37,18 +50,48 @@ local function shuffled(values, random)
     return copy
 end
 
-local function validSpawn(point, pillars)
-    for _, pillar in ipairs(pillars) do
+local function validSpawn(point, room)
+    if geometry.blocked(room, point[1], point[2], 32) then return false end
+    for _, pillar in ipairs(room.pillars) do
         if (point[1] - pillar[1])^2 + (point[2] - pillar[2])^2 < 48^2 then return false end
     end
     return true
 end
 
+local function chooseLayout(room, used, random)
+    if room.kind then return geometry.standard end
+    local eligible, unused = {geometry.standard}, {}
+    for _, layout in ipairs(geometry.variants) do
+        if geometry.fits(layout, room) then eligible[#eligible + 1] = layout end
+    end
+    for _, layout in ipairs(eligible) do
+        if not used[layout.name] then unused[#unused + 1] = layout end
+    end
+    local choices = #unused > 0 and unused or eligible
+    local choice = choices[random(#choices)]
+    used[choice.name] = true
+    return choice
+end
+
 local function furnish(rooms, random)
     local shuffledNames = shuffled(names, random)
-    local nameIndex = 1
+    local candidates = {}
+    for index = 4, #rooms do
+        local room = rooms[index]
+        if not room.kind and not room.rune then candidates[#candidates + 1] = index end
+    end
+    local packRooms = {}
+    if #candidates > 0 then
+        local order = shuffled(candidates, random)
+        local packTypes = shuffled(packs, random)
+        for i = 1, random(1, math.min(2, #order)) do packRooms[order[i]] = packTypes[i] end
+    end
+    local nameIndex, usedLayouts = 1, {}
     for _, room in ipairs(rooms) do
-        room.pillars = pillarPlans[random(#pillarPlans)]
+        local pack = packRooms[room.index]
+        room.layout = chooseLayout(room, usedLayouts, random)
+        local standard = room.layout == geometry.standard
+        room.pillars = standard and pillarPlans[random(#pillarPlans)] or {}
         if room.kind == "start" then
             room.name, room.pillars = "THE THRESHOLD", pillarPlans[1]
         else
@@ -62,15 +105,18 @@ local function furnish(rooms, random)
                 room.foes, count = {}, random(3, 4)
             else
                 room.name, room.foes = shuffledNames[nameIndex], {}
+                if pack then count = pack.count end
                 nameIndex = nameIndex + 1
             end
             local used = {}
-            for _, point in ipairs(shuffled(spawnPoints, random)) do
+            for _, point in ipairs(shuffled(standard and spawnPoints or layoutSpawnPoints, random)) do
                 if #room.foes == count then break end
-                if validSpawn(point, room.pillars) then
+                if validSpawn(point, room) then
                     local kind = "bone"
                     local slot = #room.foes + 1
-                    if room.rune and slot == 1 then
+                    if pack then
+                        kind = pack.kind
+                    elseif room.rune and slot == 1 then
                         kind = "hex"
                     elseif room.rune == 1 and slot == 2 then
                         kind = "spirit"

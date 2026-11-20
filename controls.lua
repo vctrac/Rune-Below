@@ -14,6 +14,7 @@ function controls.read(scale, offsetX, offsetY)
     local x, y = love.mouse.getPosition()
     x, y = (x - offsetX) / scale, (y - offsetY) / scale
     local fire, dash, magic = love.mouse.isDown(1), keys("lshift", "rshift"), love.mouse.isDown(2) or keys("e")
+    local sword = keys("space")
     for _, pad in ipairs(love.joystick.getJoysticks()) do
         if pad:isGamepad() then
             local gx, gy = stick(pad:getGamepadAxis("leftx"), pad:getGamepadAxis("lefty"), 0.17)
@@ -22,10 +23,11 @@ function controls.read(scale, offsetX, offsetY)
             local ax, ay = stick(rx, ry, 0.21)
             local atRim = rx * rx + ry * ry >= 0.92 * 0.92
             return mx, my, ax, ay, x, y, fire or atRim,
-                dash or pad:isGamepadDown("leftshoulder"), magic or pad:isGamepadDown("rightshoulder"), true
+                dash or pad:isGamepadDown("leftshoulder"), sword or pad:isGamepadDown("rightshoulder"),
+                magic or pad:isGamepadDown("y"), true
         end
     end
-    return mx, my, 0, 0, x, y, fire, dash, magic, false
+    return mx, my, 0, 0, x, y, fire, dash, sword, magic, false
 end
 
 return controls

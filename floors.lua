@@ -1,5 +1,6 @@
 local dungeon = require("dungeon")
 local floors = {}
+local unpack = table.unpack or unpack
 
 -- Add themes in ascending order of firstDepth. Each can supply its own generator.
 local themes = {
@@ -12,6 +13,31 @@ local themes = {
         outline = {0.52, 0.96, 0.46},
     },
 }
+
+local BREAKABLE_DOOR_HP = 3
+
+local function placeBreakableDoors(rooms, random)
+    local doors, candidates = {}, {}
+    for index in ipairs(rooms) do doors[index] = {} end
+    for index, room in ipairs(rooms) do
+        if room.kind ~= "start" and room.kind ~= "boss" then
+            for _, side in ipairs({"right", "down"}) do
+                local target = room.exits[side]
+                local neighbor = rooms[target]
+                if neighbor and neighbor.kind ~= "start" and neighbor.kind ~= "boss" then
+                    candidates[#candidates + 1] = {index, side, target}
+                end
+            end
+        end
+    end
+    for _ = 1, math.min(#candidates, random(1, 2)) do
+        local index, side, target = unpack(table.remove(candidates, random(#candidates)))
+        local door = {hp = BREAKABLE_DOOR_HP}
+        doors[index][side] = door
+        doors[target][side == "right" and "left" or "up"] = door
+    end
+    return doors
+end
 
 function floors.new(depth, random)
     local theme = themes[1]
@@ -30,17 +56,38 @@ function floors.new(depth, random)
         depth = depth, theme = theme, rooms = rooms,
         runeRequired = runeRequired,
         cleared = {[1] = true}, runes = {}, pickups = {},
+        enemies = {}, breakableDoors = placeBreakableDoors(rooms, random),
     }
 end
 
-function floors.doorOpen(floor, index, side)
-    local room = floor.rooms[index]
-    local target = room.exits[side]
-    if not target or (room.foes and not floor.cleared[index]) then return false end
-    local required = floor.runeRequired
+function floors.runeCount(floor)
     local collected = 0
     for _ in pairs(floor.runes) do collected = collected + 1 end
-    return floor.rooms[target].kind ~= "boss" or collected >= required
+    return collected
+end
+
+function floors.bossUnlocked(floor)
+    return floors.runeCount(floor) >= floor.runeRequired
+end
+
+function floors.doorState(floor, index, side)
+    local target = floor.rooms[index].exits[side]
+    if not target then return "wall" end
+    if floor.rooms[target].kind == "boss" and not floors.bossUnlocked(floor) then return "locked" end
+    local door = floor.breakableDoors[index][side]
+    if door and door.hp > 0 then return "breakable", BREAKABLE_DOOR_HP - door.hp end
+    return "open"
+end
+
+function floors.doorOpen(floor, index, side)
+    return floors.doorState(floor, index, side) == "open"
+end
+
+function floors.damageDoor(floor, index, side, damage)
+    local door = floor.breakableDoors[index][side]
+    if not door or door.hp == 0 then return end
+    door.hp = math.max(0, door.hp - damage)
+    return door.hp
 end
 
 return floors
